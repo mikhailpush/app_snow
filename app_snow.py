@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 
 st.set_page_config(
-    page_title="Школа № 19 г. Томска | Новогодний квест",
+    page_title="Школа № 19 г. Томска | Новогодний квест | Демо",
     page_icon="🎄",
     layout="centered",
     initial_sidebar_state="collapsed"
