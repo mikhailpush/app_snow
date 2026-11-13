@@ -1,15 +1,9 @@
 import streamlit as st
 import pandas as pd
+import requests
 import random
 import time
 from datetime import datetime
-
-# Попытка импорта коннектора к Google Sheets
-try:
-    from streamlit_gsheets import GSheetsConnection
-    GSHEETS_AVAILABLE = True
-except ImportError:
-    GSHEETS_AVAILABLE = False
 
 st.set_page_config(
     page_title="Школа № 19 г. Томска | Новогодний квест",
@@ -21,19 +15,16 @@ st.set_page_config(
 # --- АДАПТИВНЫЙ ДИЗАЙН (CSS ДЛЯ ТЕЛЕФОНОВ И ПК) ---
 st.markdown("""
 <style>
-    /* Увеличиваем кнопки и зоны нажатия для смартфонов */
     .stButton > button, .stFormSubmitButton > button {
         min-height: 3.1rem;
         font-size: 1.05rem !important;
         font-weight: 600 !important;
         border-radius: 12px !important;
     }
-    /* Удобные отступы у радиокнопок и чекбоксов на мобильном экране */
     div[role="radiogroup"] label, .stCheckbox label {
         padding: 6px 4px;
         font-size: 1rem !important;
     }
-    /* Праздничный баннер школы */
     .school-banner {
         background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
         color: #ffffff;
@@ -53,7 +44,6 @@ st.markdown("""
         font-size: 0.95rem;
         opacity: 0.92;
     }
-    /* Открытка с поздравлением от учителей */
     .teacher-card {
         background: linear-gradient(135deg, #fffDF9 0%, #fef3c7 100%);
         color: #1f2937;
@@ -64,7 +54,6 @@ st.markdown("""
         font-size: 0.98rem;
         line-height: 1.5;
     }
-    /* Панель крио-ключа (буквы) */
     .key-bar {
         display: flex;
         justify-content: center;
@@ -352,32 +341,35 @@ def generate_unique_codename(existing_codenames: set) -> str:
         if name not in existing_codenames:
             return name
 
-# --- 3. РАБОТА С БАЗОЙ ДАННЫХ ---
+# --- 3. РАБОТА С БАЗОЙ ДАННЫХ ЧЕРЕЗ WEBHOOK (APPS SCRIPT) ---
 COLUMNS = ["Timestamp", "LastName", "FirstName", "Grade", "League", "Codename", "Score", "TimeSec", "Details"]
 
-def load_results(fresh: bool = False):
+def load_results():
     if "local_db" not in st.session_state:
         st.session_state.local_db = pd.DataFrame(columns=COLUMNS)
-    if GSHEETS_AVAILABLE and "connections" in st.secrets:
+    webhook_url = st.secrets.get("WEBHOOK_URL", "")
+    if webhook_url:
         try:
-            conn = st.connection("gsheets", type=GSheetsConnection)
-            df = conn.read(ttl=0 if fresh else 5)
-            return df.dropna(how="all")
+            resp = requests.get(webhook_url, timeout=8)
+            if resp.status_code == 200:
+                rows = resp.json()
+                if len(rows) > 1:
+                    df = pd.DataFrame(rows[1:], columns=rows[0])
+                    return df.dropna(how="all")
+                return pd.DataFrame(columns=COLUMNS)
         except Exception:
             return st.session_state.local_db
     return st.session_state.local_db
 
 def save_result(row_dict):
-    df = load_results(fresh=True)
     new_row = pd.DataFrame([row_dict])
-    updated_df = pd.concat([df, new_row], ignore_index=True)
-    st.session_state.local_db = updated_df
-    if GSHEETS_AVAILABLE and "connections" in st.secrets:
+    st.session_state.local_db = pd.concat([st.session_state.local_db, new_row], ignore_index=True)
+    webhook_url = st.secrets.get("WEBHOOK_URL", "")
+    if webhook_url:
         try:
-            conn = st.connection("gsheets", type=GSheetsConnection)
-            conn.update(data=updated_df)
+            requests.post(webhook_url, json=row_dict, timeout=8)
         except Exception as e:
-            st.warning(f"Результат сохранен локально (ошибка облачной записи: {e})")
+            st.warning(f"Результат сохранен локально (ошибка отправки в таблицу: {e})")
 
 # --- 4. ОТРИСОВКА ШАПКИ И КРИО-КЛЮЧА ---
 def render_header():
@@ -409,7 +401,6 @@ if "stage" not in st.session_state:
     st.session_state.unlocked = []
     st.session_state.history = []
 
-# Боковая панель с информацией о школе и поздравлением
 with st.sidebar:
     st.header("🏫 Школа № 19 г. Томска")
     st.write("Интерактивный новогодний квест по естественным и точным наукам для учеников 5–11 классов.")
@@ -457,7 +448,6 @@ if st.session_state.stage == "register":
             clean_first = first_name.strip().capitalize()
             full_grade = f"{grade_num}" if grade_letter == "Без буквы" else f"{grade_num}{grade_letter}"
 
-            # Проверка на дубликат
             if not df.empty and {"LastName", "FirstName", "Grade"}.issubset(df.columns):
                 dup = df[
                     (df["LastName"].astype(str).str.lower() == clean_last.lower()) &
@@ -494,7 +484,6 @@ elif st.session_state.stage == "quiz":
     idx = st.session_state.step
     q = questions[idx]
 
-    # Компактная информационная карточка для смартфона
     with st.container(border=True):
         st.markdown(
             f"🪪 Позывной: **{user['codename']}**  \n"
@@ -506,7 +495,6 @@ elif st.session_state.stage == "quiz":
     st.subheader(q["location"])
     st.info(q["story"])
 
-    # Честная кнопка подсказки (без возможности подсмотреть бесплатно)
     if not st.session_state.used_hint and not st.session_state.answered:
         if st.button("💡 Взять научную подсказку (-2 балла при верном ответе)", use_container_width=True):
             st.session_state.used_hint = True
@@ -515,7 +503,6 @@ elif st.session_state.stage == "quiz":
     if st.session_state.used_hint:
         st.warning(f"**Подсказка лаборатории:** {q['hint']}")
 
-    # Форма ответа (исключает двойные нажатия на мобильных устройствах)
     with st.form(key=f"answer_form_{idx}"):
         st.markdown(f"**Задание:** {q['question']}")
 
@@ -571,7 +558,6 @@ elif st.session_state.stage == "quiz":
                 st.session_state.history.append(f"{q['subject']}:❌(0)")
             st.rerun()
 
-    # Вывод разбора после ответа
     if st.session_state.answered:
         letter = SECRET_WORD[idx]
         if st.session_state.last_correct:
@@ -627,9 +613,8 @@ elif st.session_state.stage == "finish":
     else:
         rank = "❄️ Отважный Исследователь Арктики"
 
-    # Адаптивная карточка диплома (отлично смотрится на экране телефона)
     with st.container(border=True):
-        st.markdown(f"### 🎓 Сертификат участника экспедиции")
+        st.markdown("### 🎓 Сертификат участника экспедиции")
         st.markdown(
             f"* **Секретный позывной:** `{user['codename']}` *(сохраните скриншот!)*  \n"
             f"* **Присвоенное звание:** **{rank}**  \n"
@@ -638,7 +623,6 @@ elif st.session_state.stage == "finish":
             f"* **Отчет по лабораториям:** {' • '.join(st.session_state.history)}"
         )
 
-    # Душевное поздравление от учителей Школы № 19 г. Томска
     st.markdown("""
     <div class="teacher-card">
         <b>🎄 Дорогой ученик Школы № 19 города Томска!</b><br><br>
