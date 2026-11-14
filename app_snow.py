@@ -8,6 +8,7 @@ import base64
 import hashlib
 import re
 import io
+import os
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 
@@ -848,7 +849,6 @@ def build_quest_for_seed(seed: int) -> dict:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_custom_questions_from_sheet(webhook_url: str):
-    """Если учителя создали в таблице лист Questions, подгружает вопросы оттуда."""
     if webhook_url:
         try:
             resp = requests.get(f"{webhook_url}?sheet=Questions", timeout=5)
@@ -1036,32 +1036,73 @@ def restore_state_from_url():
         st.query_params.clear()
     return False
 
-# --- 5. ГЕНЕРАЦИЯ СЕРТИФИКАТА В ФОРМАТАХ PNG И PDF ---
-def load_cyrillic_font(size: int, bold: bool = False):
-    candidates = (
-        [
+# --- 5. ГАРАНТИРОВАННАЯ ЗАГРУЗКА КИРИЛЛИЧЕСКОГО ШРИФТА ДЛЯ СЕРТИФИКАТА ---
+@st.cache_resource(show_spinner=False)
+def get_cyrillic_font_path(bold: bool = False) -> str:
+    """Находит русский шрифт в системе/matplotlib или автоматически скачивает его в /tmp."""
+    font_filename = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+    tmp_path = os.path.join("/tmp", font_filename)
+
+    candidates = [tmp_path]
+
+    # 1. Проверяем шрифт внутри matplotlib (если установлен)
+    try:
+        import matplotlib
+        candidates.append(os.path.join(matplotlib.get_data_path(), "fonts", "ttf", font_filename))
+    except Exception:
+        pass
+
+    # 2. Проверяем системные папки Linux / Windows
+    if bold:
+        candidates.extend([
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
             "C:/Windows/Fonts/arialbd.ttf"
-        ]
-        if bold
-        else [
+        ])
+    else:
+        candidates.extend([
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
             "C:/Windows/Fonts/arial.ttf"
+        ])
+
+    for path in candidates:
+        if os.path.exists(path) and os.path.getsize(path) > 10000:
+            return path
+
+    # 3. Автоматическое скачивание кириллического шрифта на сервер Streamlit Cloud
+    urls = (
+        [
+            "https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSans-Bold.ttf",
+            "https://raw.githubusercontent.com/googlefonts/roboto/main/src/hinted/Roboto-Bold.ttf"
+        ]
+        if bold
+        else [
+            "https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSans.ttf",
+            "https://raw.githubusercontent.com/googlefonts/roboto/main/src/hinted/Roboto-Regular.ttf"
         ]
     )
-    for path in candidates:
+    for url in urls:
         try:
-            return ImageFont.truetype(path, size)
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200 and len(resp.content) > 10000:
+                with open(tmp_path, "wb") as f:
+                    f.write(resp.content)
+                return tmp_path
         except Exception:
             continue
-    try:
-        return ImageFont.load_default(size=size)
-    except Exception:
-        return ImageFont.load_default()
+    return ""
+
+def load_cyrillic_font(size: int, bold: bool = False):
+    font_path = get_cyrillic_font_path(bold=bold)
+    if font_path:
+        try:
+            return ImageFont.truetype(font_path, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
 
 def build_diploma_image(user: dict, rank: str, score: int, max_score: int, elapsed: int) -> Image.Image:
     width, height = 1200, 850
