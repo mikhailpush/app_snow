@@ -27,18 +27,18 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    // Проверка на дубликат (Фамилия + Имя + Класс) перед записью
-    var rows = sheet.getDataRange().getValues();
+    // Серверная проверка дубликатов по Фамилии + Имени + Классу
+    var data = sheet.getDataRange().getValues();
     var targetLast = String(d.LastName || "").trim().toLowerCase();
     var targetFirst = String(d.FirstName || "").trim().toLowerCase();
     var targetGrade = String(d.Grade || "").trim().toLowerCase();
 
-    for (var i = 1; i < rows.length; i++) {
-      var rLast = String(rows[i][1] || "").trim().toLowerCase();
-      var rFirst = String(rows[i][2] || "").trim().toLowerCase();
-      var rGrade = String(rows[i][3] || "").trim().toLowerCase();
+    for (var i = 1; i < data.length; i++) {
+      var rLast = String(data[i][1] || "").trim().toLowerCase();
+      var rFirst = String(data[i][2] || "").trim().toLowerCase();
+      var rGrade = String(data[i][3] || "").trim().toLowerCase();
       if (rLast === targetLast && rFirst === targetFirst && rGrade === targetGrade) {
-        return ContentService.createTextOutput(JSON.stringify({"status": "duplicate_skipped"}))
+        return ContentService.createTextOutput(JSON.stringify({"status": "duplicate_ignored"}))
           .setMimeType(ContentService.MimeType.JSON);
       }
     }
