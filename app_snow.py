@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 
-import questions as q_mod
+from questions import build_quest_for_seed, PREDICTIONS, FUN_FACTS
 
 st.set_page_config(
     page_title="Школа № 19 г. Томска | Новогодний квест",
@@ -194,45 +194,10 @@ TOP_CLASS_COUNT = 10
 MAX_STATION_SEC = 180
 SECRET_SALT = st.secrets.get("SECRET_SALT", "tomsk_school19_ny_chrono_2027")
 
-DEFAULT_PREDICTIONS = [
-    "🌟 В новом году ты откроешь в себе талант щелкать самые хитрые задачки с первой попытки!",
-    "🍊 Зимние каникулы подарят тебе гору мандаринов, уютные вечера и отличное настроение!",
-    "🚀 В новом году тебя ждет удивительное открытие и много поводов гордиться собой!",
-    "❄️ Как нет двух одинаковых снежинок, так и твои идеи уникальны — смело воплощай их в жизнь!",
-    "🏆 Твоя смекалка и любознательность помогут тебе одержать красивую победу в новом году!"
-]
-
-DEFAULT_FUN_FACTS = [
-    ("🍊 Почему мандарины пахнут Новым годом?",
-     "В кожуре цитрусовых содержится ароматное вещество лимонен. Когда ты чистишь мандарин, микрокапли эфирного масла выстреливают в воздух и мгновенно разлетаются по комнате!"),
-    ("❄️ Почему снег скрипит под ногами только в мороз?",
-     "Когда на улице холоднее −5 °C, ледяные лучики снежинок становятся очень твердыми и хрупкими. Хруст под сапогами — это звук миллионов ломающихся микрокристаллов льда!"),
-    ("🏛️ Томский рекорд холода",
-     "Самый сильный мороз в Томске был зафиксирован в январе 1969 года и составил −55 °C! При таком холоде выплеснутая из кружки горячая вода замерзает прямо в воздухе, превращаясь в снежное облако."),
-    ("🕯️ Секрет бенгальского огня",
-     "Яркие искры бенгальской свечи — это раскаленные крупинки железа и алюминия. Но так как каждая пылинка совсем крошечная, она несет очень мало тепла и мгновенно остывает в воздухе!"),
-    ("🌲 Откуда взялся Старый Новый год?",
-     "Земля облетает вокруг Солнца за 365 суток 5 часов 48 минут и 46 секунд. В старом календаре год считали равным ровно 365 суткам и 6 часам, поэтому за много веков набежала разница в 13 дней — так появился праздник в ночь на 14 января!")
-]
-
-PREDICTIONS = getattr(q_mod, "PREDICTIONS", DEFAULT_PREDICTIONS)
-FUN_FACTS = getattr(q_mod, "FUN_FACTS", DEFAULT_FUN_FACTS)
-
-# --- 1. ЗАГРУЗКА БАНКА ВОПРОСОВ ИЗ МОДУЛЯ QUESTIONS.PY ИЛИ ЛИСТА GOOGLE ТАБЛИЦЫ ---
-def get_local_quest_bank(seed: int) -> dict:
-    if hasattr(q_mod, "build_quest_for_seed"):
-        return q_mod.build_quest_for_seed(seed)
-    elif hasattr(q_mod, "get_quest_for_seed"):
-        return q_mod.get_quest_for_seed(seed)
-    elif hasattr(q_mod, "QUEST_DATA"):
-        return q_mod.QUEST_DATA
-    elif hasattr(q_mod, "DEFAULT_QUEST_DATA"):
-        return q_mod.DEFAULT_QUEST_DATA
-    return {"5–6 классы": [], "7–8 классы": [], "9–11 классы": []}
-
+# --- 1. ЗАГРУЗКА КАСТОМНЫХ ВОПРОСОВ ИЗ GOOGLE ТАБЛИЦЫ (С FALLBACK НА QUESTIONS.PY) ---
 @st.cache_data(ttl=60, show_spinner=False)
 def load_custom_questions_from_sheet(webhook_url: str):
-    """Безопасный парсер листа Questions с валидацией каждой строки (P2)."""
+    """Безопасный парсер листа Questions с валидацией каждой строки."""
     if webhook_url:
         try:
             resp = requests.get(f"{webhook_url}?sheet=Questions", timeout=5)
@@ -286,7 +251,6 @@ def load_custom_questions_from_sheet(webhook_url: str):
             pass
     return None
 
-# Векторные поясняющие мини-схемы для блока разбора (P3)
 def get_chapter_svg(step_idx: int) -> str:
     svgs = [
         '<svg width="100%" height="50" viewBox="0 0 320 50" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="4" width="316" height="42" rx="9" fill="#0f172a"/><text x="16" y="29" fill="#f87171" font-size="12" font-family="sans-serif" font-weight="bold">🔥 Тепло</text><line x1="88" y1="10" x2="88" y2="40" stroke="#fbbf24" stroke-width="3" stroke-dasharray="4,3"/><line x1="98" y1="10" x2="98" y2="40" stroke="#fbbf24" stroke-width="3" stroke-dasharray="4,3"/><text x="110" y="29" fill="#fde047" font-size="11" font-family="sans-serif">Теплоизоляция (воздух)</text><text x="255" y="29" fill="#38bdf8" font-size="12" font-family="sans-serif" font-weight="bold">🧊 Лед</text></svg>',
@@ -302,7 +266,7 @@ def get_chapter_svg(step_idx: int) -> str:
     ]
     return svgs[step_idx % len(svgs)]
 
-# --- 2. ГЕНЕРАТОР ПОЗЫВНЫХ, ОЧИСТКА ИМЕН И ОЦЕНКА ОТВЕТОВ С ЧАСТИЧНЫМ БАЛЛОМ (P1) ---
+# --- 2. ГЕНЕРАТОР ПОЗЫВНЫХ, ОЧИСТКА ИМЕН И ОЦЕНКА ОТВЕТОВ С ЧАСТИЧНЫМ БАЛЛОМ ---
 ADJECTIVES = [
     "Квантовый", "Сверхпроводимый", "Криогенный", "Фотонный", "Магнитный",
     "Изотопный", "Спектральный", "Неоновый", "Орбитальный", "Лазерный",
@@ -342,7 +306,7 @@ def get_shuffled_options(step_idx: int, original_options: list) -> list:
     return st.session_state.shuffled_options[step_idx]
 
 def evaluate_answer(q_type: str, user_answer, correct_answer, used_hint: bool):
-    """Оценивает ответ с поддержкой частичного балла в чекбоксах (P1)."""
+    """Оценивает ответ с поддержкой частичного балла в чекбоксах (+5 или +4 с подсказкой)."""
     if q_type in ("radio", "number"):
         if user_answer == correct_answer:
             return "full", (8 if used_hint else 10)
@@ -441,7 +405,7 @@ def compute_subject_analytics(df: pd.DataFrame) -> pd.DataFrame:
         })
     return pd.DataFrame(rows)
 
-# --- 4. СЖАТОЕ И ЗАЩИЩЕННОЕ АВТОСОХРАНЕНИЕ В URL (С ЗАЩИТОЙ СЕКУНДОМЕРА t0, P0) ---
+# --- 4. СЖАТОЕ И ЗАЩИЩЕННОЕ АВТОСОХРАНЕНИЕ В URL (С ЗАЩИТОЙ СЕКУНДОМЕРА t0) ---
 def sign_state_payload(payload: dict) -> str:
     raw_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     compressed = zlib.compress(raw_bytes, level=9)
@@ -953,7 +917,7 @@ with nav_quest:
     elif st.session_state.stage == "quiz":
         user = st.session_state.user
         custom_bank = load_custom_questions_from_sheet(st.secrets.get("WEBHOOK_URL", ""))
-        quest_bank = custom_bank if custom_bank else get_local_quest_bank(st.session_state.variant_seed)
+        quest_bank = custom_bank if custom_bank else build_quest_for_seed(st.session_state.variant_seed)
         questions = quest_bank[user["league"]]
         total_q = len(questions)
         idx = st.session_state.step
@@ -974,7 +938,6 @@ with nav_quest:
         </div>
         """, unsafe_allow_html=True)
 
-        # Защищенная карточка вопроса с водяным знаком позывного и номера варианта (P2)
         st.markdown(f"""
         <div class="protected-box">
             <div class="watermark-bar">
@@ -1168,7 +1131,7 @@ with nav_quest:
 
         if st.session_state.get("review_log"):
             custom_bank = load_custom_questions_from_sheet(st.secrets.get("WEBHOOK_URL", ""))
-            quest_bank = custom_bank if custom_bank else get_local_quest_bank(st.session_state.variant_seed)
+            quest_bank = custom_bank if custom_bank else build_quest_for_seed(st.session_state.variant_seed)
             questions = quest_bank[user["league"]]
             with st.expander("🧐 Посмотреть свои ответы по всем главам"):
                 for item in st.session_state.review_log:
